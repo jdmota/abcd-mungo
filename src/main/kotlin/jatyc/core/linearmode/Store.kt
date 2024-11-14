@@ -11,8 +11,8 @@ class CasePattern(val condition: Reference, val label: String, val equal: Boolea
     return condition == wantedCondition
   }
 
-  fun replaceCondition(from: Reference, to: Reference): CasePattern {
-    return if (from == condition) CasePattern(to, label, equal) else this
+  fun assignCondition(from: Reference, to: List<Reference>): List<CasePattern> {
+    return if (from == condition) to.map { CasePattern(it, label, equal) }.plus(this) else listOf(this)
   }
 
   fun fixThis(from: Reference, to: Reference): CasePattern {
@@ -61,12 +61,20 @@ class CasePattern(val condition: Reference, val label: String, val equal: Boolea
 }
 
 class CasePatterns(val list: List<CasePattern>) {
-  fun removeCondition(condition: Reference): CasePatterns? {
-    return if (list.any { it.matchesCondition(condition) }) null else this
+  private fun hasCondition(condition: Reference): Boolean {
+    return list.any { it.matchesCondition(condition) }
   }
 
-  fun replaceCondition(from: Reference, to: Reference): CasePatterns {
-    return CasePatterns(list.map { it.replaceCondition(from, to) })
+  fun removeCondition(condition: Reference): CasePatterns? {
+    return if (hasCondition(condition)) null else this
+  }
+
+  fun invalidateCondition(condition: Reference): CasePatterns {
+    return if (hasCondition(condition)) trueCase() else this
+  }
+
+  fun assignCondition(from: Reference, to: List<Reference>): CasePatterns {
+    return CasePatterns(list.flatMap { it.assignCondition(from, to) })
   }
 
   fun fixThis(from: Reference, to: Reference): CasePatterns {
@@ -142,8 +150,12 @@ class StoreInfo private constructor(val javaType: JavaType, val cases: List<Pair
     return mapKeys { it.removeCondition(condition) }
   }
 
-  fun replaceCondition(from: Reference, to: Reference): StoreInfo {
-    return mapKeys { it.replaceCondition(from, to) }
+  fun invalidateCondition(condition: Reference): StoreInfo {
+    return mapKeys { it.invalidateCondition(condition) }
+  }
+
+  fun assignCondition(from: Reference, to: List<Reference>): StoreInfo {
+    return mapKeys { it.assignCondition(from, to) }
   }
 
   fun addCondition(pattern: CasePattern): StoreInfo {

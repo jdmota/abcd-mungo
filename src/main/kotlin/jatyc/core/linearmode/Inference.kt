@@ -30,6 +30,7 @@ class Inference(
   }
 
   private fun assign(node: CodeExpr, targetType: JTCType, pre: Store, post: Store, leftRef: Reference, rightRef: Reference, thisParam: Boolean) {
+    val nodeRef = Reference.make(node)
     val targetJavaType = leftRef.javaType
 
     if (node is Assign) {
@@ -40,10 +41,8 @@ class Inference(
     }
 
     // Correct conditional information to account for the assignment
-    if (leftRef == Reference.returnRef(leftRef.javaType) || leftRef.isSwitchVar()) {
-      for ((ref, info) in pre) {
-        post[ref] = info.replaceCondition(rightRef, leftRef)
-      }
+    for ((ref, info) in pre) {
+      post[ref] = info.invalidateCondition(leftRef).assignCondition(rightRef, listOf(leftRef, nodeRef))
     }
 
     val typeToAssign: TypeInfo
@@ -78,7 +77,7 @@ class Inference(
 
     post[leftRef] = newTargetType
     post[rightRef] = typeInExpr
-    post[Reference.make(node)] = pre[rightRef].toShared()
+    post[nodeRef] = pre[rightRef].toShared()
 
     when {
       targetType is JTCBottomType -> inference.addError(node, "Cannot assign because [${leftRef.format()}] is not accessible here")
@@ -117,12 +116,21 @@ class Inference(
     val clazz = func.clazz
     val thisRef = Reference.makeThis(func)
 
-    for ((ref, info) in pre) {
-      post[ref] = info.toRegular()
+    fun preserveConditional() {
+      for ((ref, info) in pre) {
+        post[ref] = info
+      }
+    }
+
+    fun invalidateConditional() {
+      for ((ref, info) in pre) {
+        post[ref] = info.toRegular()
+      }
     }
 
     when (node) {
       is VarDeclaration -> {
+        preserveConditional()
         val ref = Reference.make(node.id)
         val inLoop = ref in post
 
@@ -137,10 +145,12 @@ class Inference(
       }
 
       is NewObj -> {
+        preserveConditional()
         post[Reference.make(node)] = TypeInfo.make(node.javaType, node.type)
       }
 
       is Assign -> {
+        preserveConditional()
         val leftRef = Reference.makeFromLHS(node)
         val rightRef = Reference.make(node.right)
         // Allow field assignments only if:
@@ -160,6 +170,7 @@ class Inference(
       }
 
       is ParamAssign -> {
+        preserveConditional()
         val leftRef = Reference.makeFromLHS(node)
         val rightRef = Reference.make(node.expr)
         val param = node.call.methodExpr.parameters[node.idx]
@@ -167,6 +178,7 @@ class Inference(
       }
 
       is Return -> {
+        preserveConditional()
         if (node.expr == null) {
           post[Reference.returnRef(node.javaType)] = TypeInfo.make(node.javaType, JTCNullType.SINGLETON)
           post[Reference.make(node)] = TypeInfo.make(node.javaType, JTCNullType.SINGLETON)
@@ -178,6 +190,7 @@ class Inference(
       }
 
       is MethodCall -> {
+        invalidateConditional()
         // Note for later: a call is non-virtual if static or init or super call or private call
         val nodeRef = Reference.make(node)
         val methodExpr = node.methodExpr
@@ -295,11 +308,7 @@ class Inference(
       }
 
       is Id -> {
-        // Preserve conditional information
-        for ((ref, info) in pre) {
-          post[ref] = info
-        }
-
+        preserveConditional()
         val ref = Reference.make(node)
         val currentType = pre.getOrNull(ref)?.type
         if (currentType == null) {
@@ -316,10 +325,7 @@ class Inference(
       }
 
       is Select -> {
-        // Preserve conditional information
-        for ((ref, info) in pre) {
-          post[ref] = info
-        }
+        preserveConditional()
         val ref = Reference.make(node)
         val obj = node.expr
         val objRef = Reference.make(node.expr)
@@ -365,10 +371,7 @@ class Inference(
       }
 
       is Literal -> {
-        // Preserve conditional information
-        for ((ref, info) in pre) {
-          post[ref] = info
-        }
+        preserveConditional()
         val nodeRef = Reference.make(node)
         post[nodeRef] = TypeInfo.make(nodeRef.javaType, when (node) {
           is BooleanLiteral -> hierarchy.BOOLEAN
@@ -384,6 +387,7 @@ class Inference(
       }
 
       is CastExpr -> {
+        preserveConditional()
         val nodeRef = Reference.make(node)
 
         if (node.type is JTCPrimitiveType) {
@@ -418,10 +422,7 @@ class Inference(
       }
 
       is CaseExpr -> {
-        // Preserve conditional information
-        for ((ref, info) in pre) {
-          post[ref] = info
-        }
+        preserveConditional()
         val value = (node.switchOp as Assign).left
         val labels = node.caseOps.mapNotNull { getLabel(it) }
         val valueRef = Reference.make(value)
@@ -439,6 +440,7 @@ class Inference(
       }
 
       is NullCheck -> {
+        preserveConditional()
         val exprRef = Reference.make(node.expr)
         val currentType = pre[exprRef].type
         val notNull = currentType.refineToNonNull()
@@ -450,6 +452,7 @@ class Inference(
       }
 
       is BinaryExpr -> {
+        preserveConditional()
         when (node.operator) {
           BinaryOP.And -> {
             val nodeRef = Reference.make(node)
@@ -557,6 +560,7 @@ class Inference(
       }
 
       is UnaryExpr -> {
+        preserveConditional()
         when (node.operator) {
           UnaryOP.Minus,
           UnaryOP.Plus,
@@ -577,6 +581,7 @@ class Inference(
       }
 
       is NewArrayWithDimensions -> {
+        preserveConditional()
         for ((idx, init) in node.dimensions.withIndex()) {
           val valueType = pre[Reference.make(init)].toShared()
           if (!valueType.isSubtype(hierarchy.INTEGER)) {
@@ -588,6 +593,7 @@ class Inference(
       }
 
       is NewArrayWithValues -> {
+        preserveConditional()
         for ((idx, init) in node.initializers.withIndex()) {
           val valueType = pre[Reference.make(init)].toShared()
           if (!valueType.isSubtype(node.componentType)) {
@@ -599,52 +605,54 @@ class Inference(
       }
 
       is SynchronizedExprEnd -> {
+        preserveConditional()
         // TODO
       }
 
       is SynchronizedExprStart -> {
+        preserveConditional()
         // TODO
       }
 
       is TernaryExpr -> {
+        preserveConditional()
         post[Reference.make(node)] = pre[Reference.make(node.thenExpr)].or(pre[Reference.make(node.elseExpr)])
       }
 
       is ThrowExpr -> {
+        preserveConditional()
         post.toBottom()
       }
 
       is SymbolResolveExpr -> {
-        // Preserve conditional information
-        for ((ref, info) in pre) {
-          post[ref] = info
-        }
+        preserveConditional()
         // Skip
       }
 
       is NoOPExpr -> {
-        // Preserve conditional information
-        for ((ref, info) in pre) {
-          post[ref] = info
-        }
+        preserveConditional()
         // Skip
       }
 
       is FuncDeclaration -> {
-        // We start with an empty store so we do not use variables in outer scopes
+        preserveConditional()
+        // We start with an empty store, so we do not use variables in outer scopes
         classAnalysis.analyzeMethod(null, node, Store())
       }
 
       is ClassDecl -> {
+        preserveConditional()
         classAnalysis.analyze(node)
       }
 
       is ClassDeclAndCompanion -> {
+        preserveConditional()
         classAnalysis.analyze(node.nonStatic)
         classAnalysis.analyze(node.static)
       }
 
       is FuncInterface -> {
+        preserveConditional()
         // This case should come after FuncDeclaration since FuncDeclaration is a subtype of FuncInterface
         // Skip
       }
@@ -699,6 +707,7 @@ class Inference(
   fun getBooleanValue(node: CodeExpr): Boolean? = when {
     node is BooleanLiteral -> node.value
     node is UnaryExpr && node.operator == UnaryOP.Not -> getBooleanValue(node.expr)?.not()
+    node is Assign -> getBooleanValue(node.right)
     else -> null
   }
 
