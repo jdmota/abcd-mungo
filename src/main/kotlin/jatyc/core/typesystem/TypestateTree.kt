@@ -87,4 +87,20 @@ object TypestateTreeManager {
   fun make(jc: JavaType, ts: JTCType): TypestateTree {
     return TypestateTree(jc, ts, emptyList())
   }
+
+  fun isSubtype(a: TypestateTree, b: TypestateTree): Boolean {
+    if (a.jc == b.jc) {
+      if (a.ts.isSubtype(b.ts)) {
+        return b.children.all { bC ->
+          val aC = TypestateTreeUtilities.find(bC.jc, a.children)
+          isSubtype(aC ?: make(bC.jc, Subtyping.cast(a.ts, bC.jc, true)), bC)
+        }
+      }
+      return false
+    }
+    if (a.jc.isSubtype(b.jc)) {
+      return isSubtype(a, downcastTT(b, a.jc) ?: make(a.jc, Subtyping.cast(b.ts, a.jc, true)))
+    }
+    return false
+  }
 }

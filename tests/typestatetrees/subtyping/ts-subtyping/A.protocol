@@ -1,0 +1,10 @@
+typestate A {
+  A1 = {
+    void m1(): A2
+  }
+
+  A2 = {
+    void m1(): A2,
+    void m2(): end
+  }
+}

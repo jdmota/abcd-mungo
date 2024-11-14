@@ -19,13 +19,9 @@ sealed class TypeInfo {
     }
   }
 
-  fun isSubtype(other: TypeInfo): Boolean {
-    return jtcType.isSubtype(other.jtcType)
-  }
+  abstract fun isSubtype(other: TypeInfo): Boolean
 
-  fun isSubtype(other: JTCType): Boolean {
-    return jtcType.isSubtype(other)
-  }
+  abstract fun isSubtype(other: JTCType): Boolean
 
   fun isUnknown(): Boolean {
     return JTCUnknownType.SINGLETON.isSubtype(jtcType)
@@ -110,6 +106,14 @@ sealed class TypeInfo {
 }
 
 class BasicTypeInfo internal constructor(override val javaType: JavaType, override val jtcType: JTCType) : TypeInfo() {
+  override fun isSubtype(other: TypeInfo): Boolean {
+    return jtcType.isSubtype(other.jtcType)
+  }
+
+  override fun isSubtype(other: JTCType): Boolean {
+    return jtcType.isSubtype(other)
+  }
+
   override fun toShared(): TypeInfo {
     return BasicTypeInfo(javaType, jtcType.toShared())
   }
@@ -157,6 +161,20 @@ class TypestateTreeInfo internal constructor(val tree: TypestateTree) : TypeInfo
 
   override val javaType get() = tree.jc
   override val jtcType get() = tree.ts
+
+  override fun isSubtype(other: TypeInfo): Boolean {
+    if (other is TypestateTreeInfo) {
+      return TypestateTreeManager.isSubtype(tree, other.tree)
+    }
+    error("INTERNAL ERROR")
+  }
+
+  override fun isSubtype(other: JTCType): Boolean {
+    // Even if this TS has children nodes, it is fine to just check the root types
+    // because the children nodes (which provide more precise information)
+    // are on the left of the subtyping check
+    return jtcType.isSubtype(other)
+  }
 
   override fun toShared(): TypeInfo {
     return TypestateTreeInfo(tree) { it.toShared() }

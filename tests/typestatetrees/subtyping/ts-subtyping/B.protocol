@@ -1,0 +1,19 @@
+typestate B {
+  B1 = {
+    void m1(): B2
+  }
+
+  B2 = {
+    void m1(): B2,
+    void m2(): end,
+    void m3(): B3,
+    drop: end
+  }
+
+  B3 = {
+    void m1(): B2,
+    void m2(): end,
+    void m4(): B3,
+    drop: end
+  }
+}
